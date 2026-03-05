@@ -15,13 +15,9 @@ from homeassistant.components.light import (
     ColorMode,
     ATTR_BRIGHTNESS,
     ATTR_BRIGHTNESS_PCT,
-    ATTR_COLOR_TEMP,
     ATTR_COLOR_TEMP_KELVIN,
     ATTR_HS_COLOR,
     ATTR_RGB_COLOR,
-    SUPPORT_BRIGHTNESS,
-    SUPPORT_COLOR,
-    SUPPORT_COLOR_TEMP,
     LightEntity,
     PLATFORM_SCHEMA,
 )
@@ -32,7 +28,6 @@ from homeassistant.core import callback
 from homeassistant.helpers.entity import DeviceInfo, Entity
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.typing import ConfigType, DiscoveryInfoType
-from homeassistant.util import color
 from homeassistant.util.timeout import TimeoutManager
 from .const import DOMAIN
 import voluptuous as vol
@@ -200,7 +195,6 @@ class GoveLightEntity(LightEntity):
     _attr_min_color_temp_kelvin = 2000
     _attr_max_color_temp_kelvin = 9000
     _attr_supported_color_modes = {
-        ColorMode.BRIGHTNESS,
         ColorMode.COLOR_TEMP,
         ColorMode.RGB,
     }
@@ -267,14 +261,10 @@ class GoveLightEntity(LightEntity):
         if state:
             self._attr_color_temp_kelvin = state.color_temperature
             if state.color_temperature and state.color_temperature > 0:
-                self._attr_color_temp = color.color_temperature_kelvin_to_mired(
-                    state.color_temperature
-                )
                 self._attr_color_mode = ColorMode.COLOR_TEMP
                 self._attr_rgb_color = None
             elif state.color is not None:
                 self._attr_color_temp_kelvin = None
-                self._attr_color_temp = None
                 self._attr_color_mode = ColorMode.RGB
                 self._attr_rgb_color = state.color.as_tuple()
 
@@ -323,17 +313,6 @@ class GoveLightEntity(LightEntity):
 
             if ATTR_COLOR_TEMP_KELVIN in kwargs:
                 color_temp_kelvin = kwargs.pop(ATTR_COLOR_TEMP_KELVIN)
-                color_temp_kelvin = max(
-                    min(color_temp_kelvin, self._attr_max_color_temp_kelvin),
-                    self._attr_min_color_temp_kelvin,
-                )
-                await self._govee_controller.set_color_temperature(
-                    self._govee_device, color_temp_kelvin
-                )
-                turn_on = False
-            elif ATTR_COLOR_TEMP in kwargs:
-                color_temp = kwargs.pop(ATTR_COLOR_TEMP)
-                color_temp_kelvin = color.color_temperature_mired_to_kelvin(color_temp)
                 color_temp_kelvin = max(
                     min(color_temp_kelvin, self._attr_max_color_temp_kelvin),
                     self._attr_min_color_temp_kelvin,
