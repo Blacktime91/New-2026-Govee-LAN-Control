@@ -194,17 +194,41 @@ class GoveLightEntity(LightEntity):
     _govee_device: GoveeDevice
     _attr_min_color_temp_kelvin = 2000
     _attr_max_color_temp_kelvin = 9000
-    _attr_supported_color_modes = {
-        ColorMode.COLOR_TEMP,
-        ColorMode.RGB,
-    }
+    
 
     def __init__(self, controller: GoveeController, device: GoveeDevice):
         self._attr_extra_state_attributes = {}
         self._govee_controller = controller
         self._govee_device = device
+        # Determine color mode support based on device capabilities.
+        # RGBIC-only devices (like H61A2) have no color temperature channel.
         self._last_poll = None
+        # Resolve the SKU/model from wherever the library stored it.
+        model = ""
+        for src in (
+            getattr(device, "model", None),
+            getattr(getattr(device, "http_definition", None), "model", None),
+            getattr(getattr(device, "lan_definition", None), "sku", None),
+        ):
+            if src:
+                model = str(src).upper()
+                break
 
+        RGBIC_MODEL_PREFIXES = ("H619", "H61A", "H61B", "H61C", "H61D", "H61E", "H6172")
+        _is_rgbic_only = any(model.startswith(p) for p in RGBIC_MODEL_PREFIXES)
+
+        _ct_range = None
+        if getattr(device, "http_device_info", None):
+            _ct_range = getattr(device.http_device_info, "colorTemRange", None)
+
+        if _is_rgbic_only or not _ct_range:
+            self._attr_supported_color_modes = {ColorMode.RGB}
+            self._attr_color_mode = ColorMode.RGB
+        else:
+            self._attr_supported_color_modes = {ColorMode.COLOR_TEMP, ColorMode.RGB}
+            self._attr_color_mode = ColorMode.RGB
+            self._attr_min_color_temp_kelvin = _ct_range[0]
+            self._attr_max_color_temp_kelvin = _ct_range[1]
         ident = device.device_id.replace(":", "")
         self._attr_unique_id = f"{device.model}_{ident}"
 
@@ -223,10 +247,25 @@ class GoveLightEntity(LightEntity):
             # TODO: apply properties colorTem range?
         else:
             self._attr_name = fallback_name
+        _LOGGER.warning(
+            "Govee entity built: id=%s modes=%r color_mode=%r",
+            device.device_id,
+            self._attr_supported_color_modes,
+            self._attr_color_mode,
+        )
 
     def __repr__(self):
         return str(self.__dict__)
 
+    @property
+    def color_mode(self):
+        if self._attr_color_mode is not None:
+            return self._attr_color_mode
+        if ColorMode.RGB in self._attr_supported_color_modes:
+            return ColorMode.RGB
+        if ColorMode.COLOR_TEMP in self._attr_supported_color_modes:
+            return ColorMode.COLOR_TEMP
+        return next(iter(self._attr_supported_color_modes))
     @property
     def device_info(self) -> DeviceInfo:
         return DeviceInfo(
@@ -259,14 +298,23 @@ class GoveLightEntity(LightEntity):
         )
 
         if state:
-            self._attr_color_temp_kelvin = state.color_temperature
-            if state.color_temperature and state.color_temperature > 0:
+            if (
+                ColorMode.COLOR_TEMP in self._attr_supported_color_modes
+                and state.color_temperature
+                and state.color_temperature > 0
+            ):
+                self._attr_color_temp_kelvin = state.color_temperature
                 self._attr_color_mode = ColorMode.COLOR_TEMP
                 self._attr_rgb_color = None
             elif state.color is not None:
                 self._attr_color_temp_kelvin = None
                 self._attr_color_mode = ColorMode.RGB
                 self._attr_rgb_color = state.color.as_tuple()
+            else:
+                # On but no color/temp reported yet — must still report a valid mode.
+                self._attr_color_mode = ColorMode.RGB
+                if self._attr_rgb_color is None:
+                    self._attr_rgb_color = (255, 255, 255)
 
             self._attr_brightness = max(
                 min(int(255 * state.brightness_pct / 100), 255), 0
@@ -287,7 +335,10 @@ class GoveLightEntity(LightEntity):
             self.entity_id,
             kwargs,
         )
-
+        if self._attr_color_mode is None:
+            self._attr_color_mode = ColorMode.RGB
+            if self._attr_rgb_color is None:
+                self._attr_rgb_color = (255, 255, 255)
         try:
             turn_on = True
 
