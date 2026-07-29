@@ -50,6 +50,17 @@ PARALLEL_UPDATES = 1
 
 _LOGGER = logging.getLogger(__name__)
 
+# RGBIC-only models have no white channel and reject color temperature.
+RGBIC_ONLY_PREFIXES = (
+    "H619",
+    "H61A",
+    "H61B",
+    "H61C",
+    "H61D",
+    "H61E",
+    "H6172",
+)
+
 # This is read by HA
 PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend({vol.Optional(CONF_API_KEY): cv.string})
 
@@ -205,6 +216,19 @@ class GoveLightEntity(LightEntity):
         self._govee_device = device
         self._last_poll = None
 
+        model = str(getattr(device, "model", "") or "").upper()
+        if model.startswith(RGBIC_ONLY_PREFIXES):
+            self._attr_supported_color_modes = {ColorMode.RGB}
+            self._attr_color_mode = ColorMode.RGB
+        else:
+            self._attr_supported_color_modes = {ColorMode.COLOR_TEMP, ColorMode.RGB}
+        _LOGGER.debug(
+            "Govee entity %s model=%s modes=%r",
+            device.device_id,
+            model,
+            self._attr_supported_color_modes,
+        )
+
         ident = device.device_id.replace(":", "")
         self._attr_unique_id = f"{device.model}_{ident}"
 
@@ -259,8 +283,12 @@ class GoveLightEntity(LightEntity):
         )
 
         if state:
-            self._attr_color_temp_kelvin = state.color_temperature
-            if state.color_temperature and state.color_temperature > 0:
+            if (
+                ColorMode.COLOR_TEMP in self._attr_supported_color_modes
+                and state.color_temperature
+                and state.color_temperature > 0
+            ):
+                self._attr_color_temp_kelvin = state.color_temperature
                 self._attr_color_mode = ColorMode.COLOR_TEMP
                 self._attr_rgb_color = None
             elif state.color is not None:
